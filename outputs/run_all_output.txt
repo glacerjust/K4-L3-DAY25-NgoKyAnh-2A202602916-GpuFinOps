@@ -1,0 +1,121 @@
+================================================================================
+  M1 — EFFICIENCY AUDIT (MFU, MBU, GPU-UTIL LIE, IDLE WASTE & RIGHT-SIZING)
+================================================================================
+GPU           type     util%    MFU    MBU  idle_h
+gpu-h100-4    H100      98.2  0.194  0.207       0
+gpu-a10g-0    A10G      25.0  0.218  0.235       0
+gpu-a100-1    A100      28.0  0.236  0.247       0
+gpu-a100-0    A100      31.4  0.259  0.276       0
+gpu-h100-5    H100      61.1  0.261  0.271       8
+gpu-a10g-1    A10G      96.9  0.268  0.302       0
+gpu-l4-0      L4        40.0  0.302  0.328       0
+gpu-h100-2    H100      94.3  0.401  0.423       0
+gpu-h100-1    H100      95.2  0.408   0.44       0
+gpu-h100-0    H100      94.4  0.417  0.446       0
+gpu-h100-3    H100      93.1  0.427  0.444       0
+
+GPU-Util LIES (util>=90% but MFU<30%): ['gpu-h100-4', 'gpu-a10g-1']
+Idle waste (1 day): $20.00  ->  $600/month
+
+--- Extension 2: Right-Sizing by MBU & $/GB-VRAM ---
+GPU Type    $/hr  VRAM(GB)  Peak BW(TB/s)   $/GB-hr
+H100    $   2.50        80           3.35$   0.0312
+A100    $   1.79        80           2.00$   0.0224
+A10G    $   1.00        24           0.60$   0.0417
+L4      $   0.80        24           0.30$   0.0333
+
+Recommendation for gpu-h100-4 (H100):
+  -> Right-size to A100: Achieved BW is 0.69 TB/s (within A100 peak 2.0 TB/s)
+  -> Saves $0.71/hr ($511/month, 28.4%)
+
+Recommendation for gpu-a10g-1 (A10G):
+  -> Right-size to L4: Achieved BW is 0.18 TB/s (within L4 peak 0.3 TB/s)
+  -> Saves $0.20/hr ($144/month, 20.0%)
+
+================================================================================
+  M2 — INFERENCE COST LEVERS (CASCADE, PROMPT CACHE & REASONING BUDGET)
+================================================================================
+requests=2400  tokens=4,726,056
+baseline  : $30.66/day   $6.488/1M-token
+optimized : $5.32/day   $1.126/1M-token
+savings   : 82.6%  (cascade + caching + batch)
+discount stack (batch + 100% cache): 0.050 of naive
+
+--- Extension 3: Prompt Cache Economics (cache_is_worth_it) ---
+Total input tokens: 4,028,881 | Cached input tokens: 1,598,642 (Hit ratio: 39.7%)
+Large model cache break-even reads: 1.39 reads | Cache worth it? True (est. reads: 3.5)
+Small model cache break-even reads: 1.39 reads | Cache worth it? True
+
+--- Extension 4: Reasoning Traffic Budget & Energy Bomb ---
+Standard traffic : 2201 reqs (91.7%), 3,338,448 tokens (70.6%), $ 3.58 (67.3%),   5.98 kWh (12.1%)
+Reasoning traffic:  199 reqs ( 8.3%), 1,387,608 tokens (29.4%), $ 1.74 (32.7%),  43.41 kWh (87.9%)
+Reasoning intensity: Energy per query is ~80x higher than standard!
+
+================================================================================
+  M3 — PURCHASING STRATEGY (BREAK-EVEN, SPOT CHECKPOINT & CARBON-AWARE)
+================================================================================
+break-even utilization @ 45% reserved discount = 55%
+job               gpu    tier          on-demand   optimized
+job-train-llm     H100   spot         $   16,800$    10,642
+job-train-embed   A100   spot         $    2,148$     1,398
+job-finetune      H100   spot         $      900$       570
+job-infer-chat    A10G   reserved     $    4,320$     2,592
+job-infer-rag     A100   reserved     $    3,866$     2,160
+job-infer-search  L4     reserved     $    1,728$       972
+job-dev-sandbox   A10G   spot         $      480$       204
+job-batch-eval    H100   spot         $      225$       143
+
+monthly: on-demand $30,467 -> optimized $18,681  (38.7% saved)
+
+--- Extension 5: Carbon-Aware Scheduling for Interruptible Workloads ---
+Interruptible compute: 32,880.0 kWh / month
+Default region (us-east-1, 380 gCO2/kWh)    : 12,494.4 kg CO2e
+Clean region   (europe-north1, 30 gCO2/kWh) :    986.4 kg CO2e
+-> Potential carbon cut: 11,508.0 kg CO2e (92.1% reduction!)
+
+================================================================================
+  M4 — COST ALLOCATION (TEAM SHOWBACK & FOCUS EXPORT)
+================================================================================
+cost by team ($/day):
+  assistant    $    2.14
+  rag          $    1.72
+  eval         $    0.86
+  search       $    0.60
+tag coverage: 92%  ->  chargeback ready? True
+FOCUS export -> outputs/focus_export.csv (50 rows)
+
+================================================================================
+  M5 — OPTIMIZATION REPORT (BASELINE VS OPTIMIZED & SUSTAINABILITY)
+================================================================================
+# NimbusAI — GPU Cost Optimization Report
+
+## 1. Executive Summary
+
+- **Billing Period:** monthly
+- **Baseline Spend:** $31,387
+- **Optimized Spend:** $16,917
+- **Projected savings:** $14,470 (**46%** reduction)
+
+Through strategic FinOps governance, architectural routing improvements, purchasing optimization, and elimination of compute waste, NimbusAI reduces monthly GPU spend significantly while preserving production throughput and SLA.
+
+## 2. Savings by FinOps Lever
+
+| Lever | Category | Savings (USD) | Share of Savings |
+|---|---|---|---|
+| Inference (cascade/cache/batch) | Infrastructure & Serving | $760 | 5.3% |
+| Purchasing (spot/reserved) | Infrastructure & Serving | $11,786 | 81.5% |
+| Right-size util-lies | Infrastructure & Serving | $1,324 | 9.1% |
+| Kill idle GPUs | Infrastructure & Serving | $600 | 4.1% |
+
+## 3. In-Depth Engineering & FinOps Analysis
+- GPU-Util Lie: gpu-h100-4 reports 98.2% util but MFU is only 19.4% due to memory bandwidth stall.
+- Prompt Caching: Break-even at 1.39 reads; system achieves 39.7% cache hit ratio.
+- Reasoning Bomb: 8.3% requests consume 87.9% electrical power due to 80x energy multiplier.
+- FOCUS 1.0 Export: 92% tag coverage enables full automated Chargeback.
+
+## 4. Sustainability
+- Energy per query: 0.24 Wh
+- Carbon per query: 0.091 gCO2e
+- Cleanest region: europe-north1 (30 gCO2/kWh, 92.1% carbon reduction)
+
+Written: outputs/report.md + outputs/savings.png

@@ -60,21 +60,60 @@ def break_even_utilization(discount_frac: float) -> float:
     return max(0.0, min(1.0, 1.0 - discount_frac))
 
 
-def recommend_tier(hours_per_day: float, interruptible: bool, reserved_discount: float = 0.45) -> str:
+def recommend_tier(
+    hours_per_day: float,
+    interruptible: bool,
+    reserved_discount: float = 0.45,
+    gpu_type: str | None = None,
+    job_days: int | None = None,
+    interruption_rate: float | None = None,
+) -> str:
     """Pick a purchasing tier from a workload's duty cycle + interruptibility.
 
-    DOCUMENTED simple policy (instructor extension point — swap in your own):
-      - interruptible & not 24/7  -> 'spot'      (checkpoint and ride the discount)
-      - duty cycle >= break-even  -> 'reserved'  (steady, high utilization)
-      - otherwise                 -> 'on_demand' (spiky / low duty)
+    Advanced policy (Extension 1):
+      - Considers duration (job_days), interruption risk, and duty cycle.
+      - Short duration (< 15 days) avoids multi-year reserved commitment lock-in.
+      - High interrupt risk (> 15%) steers towards on-demand/reserved.
+      - Interruptible with manageable duty -> 'spot'.
+      - Long-running steady workloads (duty >= break-even) -> 'reserved'.
+      - Otherwise -> 'on_demand'.
     """
     duty = max(0.0, hours_per_day) / 24.0
     be = break_even_utilization(reserved_discount)
+
+    # Avoid long-term reserved commitment for short-lived experimental jobs (<15 days)
+    if job_days is not None and job_days < 15 and not interruptible and duty >= be:
+        return "on_demand"
+
+    # Avoid spot if interruption rate is unacceptably high (>15%)
+    if interruption_rate is not None and interruption_rate > 0.15 and interruptible:
+        return "reserved" if duty >= be else "on_demand"
+
     if interruptible and hours_per_day < 24:
         return "spot"
     if duty >= be:
         return "reserved"
     return "on_demand"
+
+
+def cache_is_worth_it(
+    avg_cache_reads: float,
+    write_cost_per_m: float = 3.75,
+    read_discount: float = 0.10,
+    base_price_in_per_m: float = 3.00,
+) -> bool:
+    """Check if prompt caching is economically net-positive (Extension 3).
+
+    Writing to cache costs write_cost_per_m (e.g. Anthropic cache-write).
+    Each cache read saves: base_price_in_per_m * (1 - read_discount).
+    Break-even reads N: write_cost_per_m / (base_price_in_per_m * (1 - read_discount)).
+    Returns True if avg_cache_reads >= break-even.
+    """
+    savings_per_read = base_price_in_per_m * (1.0 - read_discount)
+    if savings_per_read <= 0:
+        return False
+    break_even = write_cost_per_m / savings_per_read
+    return avg_cache_reads >= break_even
 
 
 def spot_checkpoint_cost(

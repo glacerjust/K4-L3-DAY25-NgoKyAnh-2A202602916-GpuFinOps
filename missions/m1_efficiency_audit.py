@@ -46,6 +46,45 @@ def run(verbose: bool = True) -> dict:
         on_demand = num(catalog_by_type()[s["gpu_type"]]["on_demand_hr"])
         idle_waste += metrics.idle_waste_usd(s["idle_hours"], on_demand)
 
+    # Extension 2: Right-sizing analysis by MBU & $/GB-VRAM
+    rightsize_recommendations = []
+    cat_by_t = catalog_by_type()
+    # Compute $/GB-VRAM for catalog GPUs
+    vram_cost_map = {}
+    for gt, info in cat_by_t.items():
+        vram_cost_map[gt] = {
+            "on_demand_hr": num(info["on_demand_hr"]),
+            "hbm_gb": num(info["hbm_gb"]),
+            "peak_bw_tbs": num(info["peak_bw_tbs"]),
+            "cost_per_gb_hr": round(num(info["on_demand_hr"]) / num(info["hbm_gb"]), 4) if num(info["hbm_gb"]) > 0 else 0,
+        }
+
+    # Evaluate candidates for right-sizing (especially lies or memory-bound with low MFU)
+    for lie in lies:
+        cur_type = lie["gpu_type"]
+        cur_bw_achieved = lie["mbu"] * vram_cost_map[cur_type]["peak_bw_tbs"]
+        # Find cheaper candidate GPU that still satisfies achieved bandwidth
+        candidates = [
+            gt for gt, info in vram_cost_map.items()
+            if info["on_demand_hr"] < vram_cost_map[cur_type]["on_demand_hr"]
+            and info["peak_bw_tbs"] >= cur_bw_achieved
+        ]
+        if candidates:
+            # Pick best candidate with highest bandwidth headroom at lower cost
+            best_cand = min(candidates, key=lambda gt: vram_cost_map[gt]["on_demand_hr"])
+            hr_save = vram_cost_map[cur_type]["on_demand_hr"] - vram_cost_map[best_cand]["on_demand_hr"]
+            pct_save = (hr_save / vram_cost_map[cur_type]["on_demand_hr"]) * 100
+            rightsize_recommendations.append({
+                "gpu_id": lie["gpu_id"],
+                "current_type": cur_type,
+                "recommended_type": best_cand,
+                "achieved_bw_tbs": round(cur_bw_achieved, 2),
+                "target_peak_bw": vram_cost_map[best_cand]["peak_bw_tbs"],
+                "hourly_savings": round(hr_save, 2),
+                "monthly_savings": round(hr_save * 24 * 30, 2),
+                "savings_pct": round(pct_save, 1),
+            })
+
     if verbose:
         print("== M1 Efficiency Audit ==")
         print(f"{'GPU':14}{'type':7}{'util%':>7}{'MFU':>7}{'MBU':>7}{'idle_h':>8}")
@@ -54,7 +93,23 @@ def run(verbose: bool = True) -> dict:
         print(f"\nGPU-Util LIES (util>=90% but MFU<30%): {[l['gpu_id'] for l in lies]}")
         print(f"Idle waste (1 day): ${idle_waste:,.2f}  ->  ${idle_waste*30:,.0f}/month")
 
-    return {"summary": summary, "lies": lies, "idle_waste_daily": round(idle_waste, 2)}
+        print("\n--- Extension 2: Right-Sizing by MBU & $/GB-VRAM ---")
+        print(f"{'GPU Type':8}{'$/hr':>8}{'VRAM(GB)':>10}{'Peak BW(TB/s)':>15}{'$/GB-hr':>10}")
+        for gt in ["H100", "A100", "A10G", "L4"]:
+            info = vram_cost_map[gt]
+            print(f"{gt:8}${info['on_demand_hr']:>7.2f}{info['hbm_gb']:>10.0f}{info['peak_bw_tbs']:>15.2f}${info['cost_per_gb_hr']:>9.4f}")
+        for rec in rightsize_recommendations:
+            print(f"\nRecommendation for {rec['gpu_id']} ({rec['current_type']}):")
+            print(f"  -> Right-size to {rec['recommended_type']}: Achieved BW is {rec['achieved_bw_tbs']} TB/s (within {rec['recommended_type']} peak {rec['target_peak_bw']} TB/s)")
+            print(f"  -> Saves ${rec['hourly_savings']:.2f}/hr (${rec['monthly_savings']:,.0f}/month, {rec['savings_pct']}%)")
+
+    return {
+        "summary": summary,
+        "lies": lies,
+        "idle_waste_daily": round(idle_waste, 2),
+        "rightsize_recommendations": rightsize_recommendations,
+        "vram_cost_map": vram_cost_map,
+    }
 
 
 if __name__ == "__main__":

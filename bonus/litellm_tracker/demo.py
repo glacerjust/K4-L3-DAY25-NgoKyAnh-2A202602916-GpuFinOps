@@ -1,4 +1,5 @@
-"""Demo: per-key $/request tracking + a hard budget stop. Run: python demo.py"""
+import os, sys
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from tracker import CostTracker, BudgetExceeded
 
 t = CostTracker(budgets={"team-chat": 0.05, "team-eval": 100.0})
